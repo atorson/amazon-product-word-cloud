@@ -32,7 +32,7 @@ case class WordCloud[Repr: ClassTag](topK: Int, wordCounts: Repr)
 @Api("/wordcloud")
 class ProductDescriptionRoute(val modules: ActorModule with StoreModule with AWSModule) extends Directives {
 
-  type WordCountsSeq = Seq[(String, Int)]
+  type WordCountsSeq = Seq[(String, modules.ValueOut)]
   val REQ_URL_PARAM = "ProductURL"
   val REQ_TOPK_PARAM = "TopK"
   object JsonProtocol extends DefaultJsonProtocol {
@@ -49,28 +49,26 @@ class ProductDescriptionRoute(val modules: ActorModule with StoreModule with AWS
   // URL, ProductID and Promise to complete
   type Req = (String, modules.productRetriever.ProductID, Promise[Done])
   // need to throttle AWS requests rate (to avoid 503 response) and buffer the POSTed URLs
+  // there is a small chance that there may be duplicate keys in this flow (despite of prior contains check):
+  // it is the case when a batch of requests accumulated over 1000 millis has duplicate URLs that were not cached yet
+  // we will hit AWS in this case (not a big deal, compared to the cost of asking 'contains' again on every request)
+  // and we let the persistor handle it as it seems fit
+  // e.g. it should only persist once and fail all duplicate requests with DuplicateKeysException
   val runningAWSRetrivealFlowMat = Source.actorPublisher[Req](StreamingPublisherActor.props[Req]()).viaMat(
     Flow[Req].buffer(10000000, OverflowStrategy.backpressure).throttle(1, 1000.milli, 1, ThrottleMode.Shaping))(Keep.left)
     .async.viaMat(KillSwitches.single)(Keep.both).toMat(Sink.foreach{x: Req => {
-      modules.inDuplicateKeyChecker.contains(x._2).andThen{case Success(b) => {
-        if (b) {
-          // URL has been processed while waiting in buffer
-          x._3.complete(Failure(new DuplicateKeyPersistenceException(s"Product description ${x._2} has already been processed")))
-        } else {
           // complete passed promise with URL retrieve + persist future
           x._3.completeWith(
             modules.productRetriever.find(x._1).flatMap{
               z: modules.productRetriever.ProductDescription => modules.inPersistor.persist(Seq((z._1, z._2))).map(_ => Done)}
           )
-        }
-      }}
       }})(Keep.left).run
 
 
   @ApiOperation(value = "Return Top-K Words", notes = "Word cloud based on injested Amazon product descriptions",
     consumes = "application/x-www-form-urlencoded", produces = "application/json", nickname = "", httpMethod = "GET")
   @ApiImplicitParams(Array(
-    new ApiImplicitParam(name = "TopK", value = "Word Cloud Top-K Slice Size", required = true, dataType = "integer", allowableValues = "range[1, infinity]", defaultValue = "10", paramType = "query")
+    new ApiImplicitParam(name = "TopK", value = "Word Cloud Top-K Slice Size", required = true, dataType = "integer", allowableValues = "range[1, 1000]", defaultValue = "10", paramType = "query")
   ))
   @ApiResponses(Array(
     new ApiResponse(code = 200, message = "Return Top-K Words", response = classOf[WordCloud[WordCountsSeq]]),

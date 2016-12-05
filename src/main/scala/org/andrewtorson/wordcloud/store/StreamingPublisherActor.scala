@@ -7,37 +7,17 @@
 package org.andrewtorson.wordcloud.store
 
 import scala.annotation.tailrec
-import scala.concurrent.{ExecutionContext, Future}
 import scala.reflect.ClassTag
 
-import akka.{Done, NotUsed}
-import akka.actor.{ActorLogging, ActorRef, Props}
+import akka.{Done}
+import akka.actor.{ActorLogging, Props}
 import akka.stream.actor.ActorPublisher
-import org.andrewtorson.wordcloud.component.{AsyncContainsChecker, AsyncPersistor}
-
 
 
 
 /**
  * Created by Andrew Torson on 8/26/16.
  */
-
-
-class ActorPublisherPersistor[K, V](publisher: ActorRef, keyStore: ActorBasedLocalSubStore[K, NotUsed, _])
-  extends AsyncPersistor[K,V] with AsyncContainsChecker[K]{
-  import akka.pattern._
-  import keyStore._
-  def persist(id: K, value: V): Future[Done] = {
-    keyStore.persist(Seq((id,NotUsed))).flatMap(_ => ask(publisher, value).map(_ => Done))
-  }
-
-  override def persist(entires: TraversableOnce[(K, V)]): Future[Done] = {
-    Future.sequence(entires.map(x => persist(x._1, x._2))).map(_=>Done)
-  }
-
-  override def contains(key: K): Future[Boolean] = keyStore.contains(key)
-}
-
 
 
 object StreamingPublisherActor{

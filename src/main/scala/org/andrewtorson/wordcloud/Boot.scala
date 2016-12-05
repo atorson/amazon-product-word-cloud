@@ -23,27 +23,32 @@ import org.andrewtorson.wordcloud.rest.{CorsSupport, SwaggerDocService}
 
 object Main extends App with RouteConcatenation with CorsSupport with LazyLogging{
 
-  val modules = new ConfigurationModuleImpl  with ActorModuleImpl with BasicStreamAnaluticsModule with
-    LocalStoreModuleImplementation  with AWSModuleImpl with RestModuleImpl
+  val modules = new ConfigurationModuleImpl  with ActorModuleImpl with
+    DistributedStoreModuleImplementation  with DistributedStreamAnalyticsModule with AWSModuleImpl with RestModuleImpl
 
   // Akka implicits
   implicit val system = modules.system
   implicit val materializer = ActorMaterializer()
   implicit val ec = modules.system.dispatcher
 
+  //ToDo: add shutdown hooks and launch spark on separate thread
   launch()
 
-  def launch(): Option[ServerBinding] = {
-    val swaggerService = new SwaggerDocService(system)
+  def launch() = {
     try {
-      val binding = Some(Await.result(Http().bindAndHandle(Route.handlerFlow(
+      // start Spark
+      modules.wordsCloud.sc.start()
+      // start HTTP server
+      val swaggerService = new SwaggerDocService(system)
+      Await.result(Http().bindAndHandle(Route.handlerFlow(
         swaggerService.assets ~
-          corsHandler(swaggerService.routes) ~ modules.routes), "localhost", 8080), Duration.Inf))
+          corsHandler(swaggerService.routes) ~ modules.routes), "localhost", 8080), Duration.Inf)
       logger.info("Launched HTTP server at http://localhost:8080")
-      binding
     } catch {
-      case x: Throwable => None
+      case x: Throwable =>  sys.error(s"Fatal error starting application")
     }
   }
+
+
 
 }

@@ -48,7 +48,7 @@ Basic version:
 
   - uses Local store module implementation: 
        a) all product IDs (extracted from URLs) are stored in a local in-memory cache backed by an immutable HashMap[Key, Unit]
-       b) word cloud is stored in a local in-memory cache backed up by immutable HashMap[Word = String, WordCount = Int] and immutable TreeMap[(Word, WordCount), Unit] combo
+       b) word cloud is stored in a local in-memory cache backed up by immutable HashMap[Word = String, WordCount = Long] and immutable TreeMap[(Word, WordCount), Unit] combo
        c) all cache operations are atomic (hidden behind an Akka Actor) and scalable (due to their incremental nature tailored for streaming updates).
        TreeMap provides very fast sorted iterator for Reads (immutable RB-tree in-order traversal) while being somewhat slow (logN) with Writes 
   - uses Akka Streams stream analytics module implementation:
@@ -67,7 +67,7 @@ Advanced version:
       
 #Running
 
-You should start Redis on port 5678 and then:
+You should start Redis (on default port 6379) and then:
 
        $ sbt run
 

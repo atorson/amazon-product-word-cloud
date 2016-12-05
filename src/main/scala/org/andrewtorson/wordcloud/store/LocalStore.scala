@@ -1,23 +1,24 @@
 package org.andrewtorson.wordcloud.store
 
-import scala.collection.immutable.{SortedMap}
+import scala.collection.immutable.SortedMap
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.{FiniteDuration, _}
 import scala.reflect.ClassTag
 
 import akka.{Done, NotUsed}
 import akka.actor.{Actor, ActorRefFactory, Props}
-import akka.stream.scaladsl.{Source}
+import akka.stream.scaladsl.Source
 import akka.util.Timeout
-import org.andrewtorson.wordcloud.component.{AsyncContainsChecker, AsyncPersistor, SourceAccessor}
+import org.andrewtorson.wordcloud.component.{AsyncContainsChecker, AsyncPersistor, DuplicateKeyPersistenceException, SourceAccessor}
 
 /**
  * Created by Andrew Torson on 12/1/16.
  */
 
 class ActorBasedLocalSubStore[K: ClassTag, V: ClassTag, T <: SubStoreActor: ClassTag](creator: ⇒ T, adviseToFailOnDuplicateKeys: Boolean = false)(implicit system: ActorRefFactory) extends AsyncPersistor[K,V] with SourceAccessor[(K,V)] with AsyncContainsChecker[K]{
+  import scala.concurrent.duration._
   protected val actorRef = system.actorOf(Props(creator))
-  implicit val defaultTimeout = Timeout(FiniteDuration(5, SECONDS))
+  implicit val defaultTimeout = Timeout(5.seconds)
   implicit val ec = system.dispatcher
   import akka.pattern._
 
@@ -25,10 +26,11 @@ class ActorBasedLocalSubStore[K: ClassTag, V: ClassTag, T <: SubStoreActor: Clas
     Await.result(ask(actorRef, Access), defaultTimeout.duration).asInstanceOf[Source[(K,V), NotUsed]]
   }
 
+  // persist all and then throws if keys duplicate (if advised to do that)
   override def persist(entires: TraversableOnce[(K, V)]): Future[Done] = {
     ask(actorRef, BatchPersist(entires, adviseToFailOnDuplicateKeys)).map(_ match {
       case true => Done
-      case _ => throw new IllegalArgumentException(s"Persistence failure due to duplicate keys found in $entires")
+      case false => throw new DuplicateKeyPersistenceException(s"Duplicate keys found in $entires")
     })
   }
 
@@ -105,14 +107,12 @@ class BasicSubStoreActor[K: ClassTag, V: ClassTag] extends SubStoreActor with Ba
       sender ! innerStore.contains(key)
     }
 
+    // persist all and then returns boolean (false, if keys duplicate and advised to do that)
     case x: BatchPersist[K,V]  => {
       val entries = x.entries.toSeq
-      if (x.adviseToFailOnDuplicateKeys && !innerStore.keySet.intersect(entries.map(_._1).toSet).isEmpty){
-        sender ! false
-      } else {
-        innerStore = batchPersist(x.entries)(innerStore)
-        sender ! true
-      }
+      val result = if (x.adviseToFailOnDuplicateKeys && !innerStore.keySet.intersect(entries.map(_._1).toSet).isEmpty) false else true
+      innerStore = batchPersist(x.entries)(innerStore)
+      sender ! result
     }
 
     case Access =>
