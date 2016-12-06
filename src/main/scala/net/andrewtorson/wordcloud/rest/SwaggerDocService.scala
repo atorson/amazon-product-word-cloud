@@ -6,6 +6,8 @@
 
 package net.andrewtorson.wordcloud.rest
 
+import java.net.InetSocketAddress
+
 import scala.reflect.runtime.{universe => ru}
 
 import akka.actor.ActorSystem
@@ -14,12 +16,16 @@ import akka.stream.ActorMaterializer
 import com.github.swagger.akka._
 import com.github.swagger.akka.model.Info
 
-
-class SwaggerDocService(system: ActorSystem) extends SwaggerHttpService with HasActorSystem {
+/**
+ * Swagger API documentation and GUI service powered by Akka-HTTP
+ * @param system actor system
+ * @param address Swagger destination redirect address
+ */
+class SwaggerDocService(system: ActorSystem, address: InetSocketAddress) extends SwaggerHttpService with HasActorSystem {
   override implicit val actorSystem: ActorSystem = system
   override implicit val materializer: ActorMaterializer = ActorMaterializer()
   override val apiTypes = Seq(ru.typeOf[ProductDescriptionRoute])
-  override val host = "localhost:8080"
+  override val host = address.toString
   override val info = Info(version = "2.0")
 
   def assets = pathPrefix("swagger") {

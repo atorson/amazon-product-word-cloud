@@ -13,7 +13,23 @@ import net.andrewtorson.wordcloud.component.DuplicateKeyPersistenceException
 /**
  * Created by Andrew Torson on 12/1/16.
  */
-
+/**
+ * API Facade delegating persist/access operations to an Actor holding the actual data
+ * All operations are atomic
+ *
+ * Note: no serialization is needed by nature of local Actors technology
+ * All used messages are holding immutable collection structures
+ *
+ * @param creator
+ * @param adviseToFailOnDuplicateKeys
+ * @param ev$1
+ * @param ev$2
+ * @param ev$3
+ * @param system
+ * @tparam K
+ * @tparam V
+ * @tparam T
+ */
 class ActorBasedLocalSubStore[K: ClassTag, V: ClassTag, T <: SubStoreActor: ClassTag](creator: ⇒ T, adviseToFailOnDuplicateKeys: Boolean = false)(implicit system: ActorRefFactory) extends AsyncPersistor[K,V] with SourceAccessor[(K,V)] with AsyncContainsChecker[K]{
   import scala.concurrent.duration._
   protected val actorRef = system.actorOf(Props(creator))
@@ -45,6 +61,13 @@ case class Contains[K: ClassTag](key: K)
 case class BatchPersist[K: ClassTag, V: ClassTag](entries: TraversableOnce[(K,V)], adviseToFailOnDuplicateKeys: Boolean)
 case object Access
 
+/**
+ * This interface wraps the direct collection access and is meant to be overriden in different types of persistors
+ * The collections must be derivatives of immutable map: we do not want to handle the mess with updating mutable map iterators
+ * @tparam K
+ * @tparam V
+ * @tparam M specifc data collection type
+ */
 sealed trait LocalStoreContext[K, V, M<:Map[K,V]] {
 
   def getEntryIterator(store: M)(): Iterator[(K,V)]
@@ -56,6 +79,11 @@ sealed trait LocalStoreContext[K, V, M<:Map[K,V]] {
   def batchRemove(keys: TraversableOnce[K])(store: M): M
 }
 
+/**
+ * Basic map access interface: replaces duplicate entries
+ * @tparam K
+ * @tparam V
+ */
 sealed trait BasicLocalStoreContext[K, V] extends LocalStoreContext[K,V, Map[K,V]]{
 
   def getEntryIterator(store: Map[K,V])(): Iterator[(K,V)] = store.iterator
@@ -67,6 +95,11 @@ sealed trait BasicLocalStoreContext[K, V] extends LocalStoreContext[K,V, Map[K,V
   def batchRemove(keys: TraversableOnce[K])(store: Map[K,V]): Map[K,V] = keys.foldLeft(store)(_ - _)
 }
 
+/**
+ * Reducer-type interface: can incrementally aggregate duplicate entry values
+ * @tparam K
+ * @tparam V
+ */
 sealed trait ReducerLocalStoreContext[K, V] extends BasicLocalStoreContext[K,V]{
 
   val reducer: (V,V) => V
@@ -79,6 +112,11 @@ sealed trait ReducerLocalStoreContext[K, V] extends BasicLocalStoreContext[K,V]{
   }))
 }
 
+/**
+ * Sorted collection interface: backed by immutable SortedMap (holding a RB-tree within: super-fast O(1) iterator)
+ * @tparam K
+ * @tparam V
+ */
 sealed trait SortedLocalStoreContext[K, V] extends LocalStoreContext[K,V, SortedMap[K,V]]{
 
   implicit val ord: Ordering[K]
@@ -92,6 +130,10 @@ sealed trait SortedLocalStoreContext[K, V] extends LocalStoreContext[K,V, Sorted
   override def empty(): SortedMap[K,V] = SortedMap[K,V]()
 }
 
+/**
+ * Marker interface designating a sub-category of actors that can be used by the ActorBasedLocalSubStore Facade
+ * Note: experimental Akka-Typed-Actor technology could be used instead
+ */
 sealed trait SubStoreActor extends Actor {
 
 }
@@ -107,6 +149,7 @@ class BasicSubStoreActor[K: ClassTag, V: ClassTag] extends SubStoreActor with Ba
     }
 
     // persist all and then returns boolean (false, if keys duplicate and advised to do that)
+    // this is the contract that REST endpoint likes
     case x: BatchPersist[K,V]  => {
       val entries = x.entries.toSeq
       val result = if (x.adviseToFailOnDuplicateKeys && !innerStore.keySet.intersect(entries.map(_._1).toSet).isEmpty) false else true
@@ -119,6 +162,15 @@ class BasicSubStoreActor[K: ClassTag, V: ClassTag] extends SubStoreActor with Ba
   }
 }
 
+/**
+ * This actor has two maps: HashMap and SortedMap
+ * It provides a persistor (that goes first to HashMap and ends at SortedMap
+ * and accessor that only acesses SortedMap
+ *
+ * @param reducer reducer to handle incremental persistence (on duplicate entries)
+ * @tparam K
+ * @tparam V
+ */
 class SortedSubStoreActor[K: ClassTag, V<% Ordered[V]: ClassTag](override val reducer: ((V,V) => V)) extends SubStoreActor with ReducerLocalStoreContext[K,V] {
 
   // alas, Scala does not allow to mix this sorted context
@@ -127,6 +179,7 @@ class SortedSubStoreActor[K: ClassTag, V<% Ordered[V]: ClassTag](override val re
       override def compare(x: (K,V), y: (K,V)): Int =
       //desc ordering
         y._2.compareTo(x._2) match {
+            // super-important to handle 0 here
           case 0 => y._1.hashCode().compareTo(x._1.hashCode())
           case v => v
         }
@@ -142,7 +195,11 @@ class SortedSubStoreActor[K: ClassTag, V<% Ordered[V]: ClassTag](override val re
     case Contains(key: K) =>{
       sender ! basicStore.contains(key)
     }
-    
+
+     // get keys from request -> get old values in HashMap -> delete corresponding entries in SortedMap
+      // then, persist/increment the new values in HashMap -> get the new values and store them in SortedMap
+      // this operation is atomic: all messages sent concurrently - are queued in the mailBox while actor is running it
+
     case x: BatchPersist[K,V]  => {
       val keys = x.entries.map(_._1).toSeq
       sortedStore = sortedContext.batchRemove(keys.flatMap(x => basicStore.get(x).map((x, _))))(sortedStore)

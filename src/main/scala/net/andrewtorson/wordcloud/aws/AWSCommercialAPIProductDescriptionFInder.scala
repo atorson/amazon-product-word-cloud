@@ -3,38 +3,44 @@ package net.andrewtorson.wordcloud.aws
 import java.net.URLDecoder
 import javax.xml.parsers.DocumentBuilderFactory
 
-import scala.collection.immutable.ListMap
+
 import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Success, Try}
 
+import com.typesafe.config.Config
 import net.andrewtorson.amazonapi.SignedAWSRequestsHelper
 
 
 /**
  * Created by Andrew Torson on 11/29/16.
+ * Retrieves Amazon product descriptions
+ * This implementation uses official AWS Commercial API via XML endpoint
  */
-object AWSCommercialAPIProductDescriptionFinder extends AsyncProductDescriptionFinder{
+
+class MissingProductDescriptionException (message: String) extends RuntimeException (message)
+
+class InvalidProductURLException(message: String) extends RuntimeException(message)
+
+class AWSCommercialAPIProductDescriptionFinder(config: Config) extends AsyncProductDescriptionFinder{
+
     private final val CHARSET = "UTF-8"
-    private final val ENDPOINTS = ListMap[String, SignedAWSRequestsHelper](
-      "com"-> SignedAWSRequestsHelper.getInstance("ecs.amazonaws.com"),
-      "uk"->SignedAWSRequestsHelper.getInstance("ecs.amazonaws.co.uk"),
-      "de"->SignedAWSRequestsHelper.getInstance("ecs.amazonaws.de"),
-      "fr"->SignedAWSRequestsHelper.getInstance("ecs.amazonaws.fr"),
-      "jp"->SignedAWSRequestsHelper.getInstance("ecs.amazonaws.jp"),
-      "ca"->SignedAWSRequestsHelper.getInstance("ecs.amazonaws.ca"))
+
+    // different product IDs may require different AWS destinations: URL actually defines the destination - so use it
+    private final val ENDPOINTS = Map[String, SignedAWSRequestsHelper](
+      "com"-> new SignedAWSRequestsHelper(config, "ecs.amazonaws.com"),
+      "uk"-> new SignedAWSRequestsHelper(config, "ecs.amazonaws.co.uk"),
+      "de"-> new SignedAWSRequestsHelper(config, "ecs.amazonaws.de"),
+      "fr"-> new SignedAWSRequestsHelper(config, "ecs.amazonaws.fr"),
+      "jp"-> new SignedAWSRequestsHelper(config, "ecs.amazonaws.jp"),
+      "ca"-> new SignedAWSRequestsHelper(config, "ecs.amazonaws.ca"))
 
     private final def getHelper(host: String): SignedAWSRequestsHelper= {
-      val parts = host.split(".")
-      for ( endpoint <- ENDPOINTS){
-        if (parts.contains(endpoint._1)){
-          return endpoint._2;
-        }
-      }
-      return ENDPOINTS.values.head
+      val parts = host.split(".").reverse
+      ENDPOINTS.getOrElse(parts.find(ENDPOINTS.get(_).isDefined).getOrElse("com"), ENDPOINTS.head._2)
     }
 
-
+  // Amazon specific HTML 'product' endpoint format:
   override def extract(urlEncoded: String): Try[ProductLocator] =
    try {
      val parts = URLDecoder.decode (urlEncoded, CHARSET).split ("/")
@@ -46,9 +52,6 @@ object AWSCommercialAPIProductDescriptionFinder extends AsyncProductDescriptionF
    }
 
 
-    class MissingProductDescriptionException (message: String) extends RuntimeException (message)
-    class InvalidProductURLException(message: String) extends RuntimeException(message)
-
     private final def throwMissingDescriptionException(id: ProductID, host: String): Nothing = {
       throw new MissingProductDescriptionException (s"Product $id description is missing on $host")
     }
@@ -57,6 +60,7 @@ object AWSCommercialAPIProductDescriptionFinder extends AsyncProductDescriptionF
       throw new InvalidProductURLException(s"Product URL $url is invalid")
     }
 
+    // main method that does all the heavy lifting: uses somewhat old-fashioned official javax XML DOM parser
     private def fetchDescription(productLocator: ProductLocator): ProductDescription = {
 
     import scala.collection.JavaConversions._

@@ -11,6 +11,11 @@ import org.apache.kafka.clients.producer.{Callback, ProducerRecord, RecordMetada
  * Created by Andrew Torson on 12/3/16.
  */
 
+/**
+ * Kafka topic holding producer/consumer connection settings
+ * @tparam K
+ * @tparam V
+ */
 trait KafkaTopic[K,V]{
 
   val topic: String
@@ -19,6 +24,11 @@ trait KafkaTopic[K,V]{
   val consumerSettings: ConsumerSettings[K,V]
 }
 
+/**
+ * Kafka producer that powers AsyncPersistor interface
+ * @tparam K
+ * @tparam V
+ */
 trait KafkaProducer[K,V] extends KafkaTopic[K,V] with AsyncPersistor[K,V]{
 
   implicit val ec: ExecutionContext

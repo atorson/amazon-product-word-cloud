@@ -15,6 +15,9 @@ import net.andrewtorson.wordcloud.component.DuplicateKeyPersistenceException
 /**
  * Created by Andrew Torson on 12/3/16.
  */
+/**
+ * Wrapper interface for Redis client connections
+ */
 trait RedisAgent{
 
   import scala.concurrent.duration._
@@ -26,17 +29,25 @@ trait RedisAgent{
 
 }
 
+/**
+ * Peristor and key-contains checker backed by Redist BitSet
+ * @tparam K
+ * @tparam V
+ */
 trait RedisBitSetAgent[K,V] extends RedisAgent with AsyncPersistor[K,V] with AsyncContainsChecker[K]{
 
   import scala.math._
   val cachePrefix: String
 
+  // first entry is Redis sub-cache, second is the offset in that sub-cache
   type RedisLocator = (String, Int)
 
+  // number of Redis sub-caches used: each Redis cache is maxed out at 512Mb and allows only Int offsets
   val N: Int = pow(2, 10).toInt
 
   val rootUUID = UUID.fromString("d4d1c83d-d63a-46cf-8597-d6e8d2a0b0ba")
 
+  // generates 128-bit Java UUID - and uses leastSignificant bits for sub-cache and most-signficant for offset
   final protected def getLocator(key: K): RedisLocator = {
       val uuid = getUUID(rootUUID, key.toString)
       // miniscule chance of cache collisions: this is fine as it will result in extreme rare cache miss that is certainly not critical
@@ -52,7 +63,7 @@ trait RedisBitSetAgent[K,V] extends RedisAgent with AsyncPersistor[K,V] with Asy
   }
 
 
-  // persist all and then throws if keys duplicate
+  // persist all and then throws if keys duplicate: this is the contract that REST endpoint likes
   override def persist(entries: TraversableOnce[(K, V)]): Future[Done] = {
 
     Future.sequence(entries.map(x => {val y = getLocator(x._1)
@@ -69,6 +80,11 @@ trait RedisBitSetAgent[K,V] extends RedisAgent with AsyncPersistor[K,V] with Asy
   }
 }
 
+/**
+ * Persistor and accessor backed by Redis SortedSet
+ * @tparam K
+ * @tparam V
+ */
 trait RedisSortedSetAgent[K,V] extends RedisAgent with AsyncPersistor[K,V] with SourceAccessor[(K,V)]{
 
   val cacheName: String
@@ -79,14 +95,14 @@ trait RedisSortedSetAgent[K,V] extends RedisAgent with AsyncPersistor[K,V] with 
   implicit val writer: Writer[K]
   implicit val reader: Reader[K]
 
-  // incremental persistence suitable for streaming
+  // incremental persistence (via zincrby() suitable for streaming)
   override def persist(entries: TraversableOnce[(K, V)]): Future[Done] = {
     Future.sequence(
       ScoredValue.applySeq(entries.map(x => (x._2, x._1)).toSeq).map(z => client.zincrby(cacheName, z.score, z.value))
     ).map(_ =>Done)
   }
 
-  private final def getIterator(): Iterator[(K,V)] =
+  private final def getIterator(): Iterator[(K,V)] = // inverted range iterator!
     Await.result(client.zrevrangeWithScores(cacheName, 0, cutoff).map(
       _.map(x => (x._1, num.fromInt(x._2.toInt)))),defaultTimeout.duration).iterator
 

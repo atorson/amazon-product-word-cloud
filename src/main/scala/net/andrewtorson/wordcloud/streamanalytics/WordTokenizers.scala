@@ -5,6 +5,11 @@ import edu.stanford.nlp.process.Stemmer
 /**
  * Created by Andrew Torson on 12/1/16.
  */
+
+/**
+ * Simple English word tokenizer
+ * Backed by Regex, hard-coded Stop-Word list and Stanford NLP Stemmer
+ */
 object EnglishRegexTokenizer extends WordsTokenizer{
   override def tokenize(in: String): Seq[String] = {
 

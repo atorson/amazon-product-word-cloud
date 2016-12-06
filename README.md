@@ -11,19 +11,21 @@ The service uses the following collection of components:
   - Stream Analytics: provides the data pipeline to incrementally process product descriptions and update the word cloud
   - REST: defines the routes for the web service endpoint
 
-All components are defined by interface: implementations are injected via Cake Pattern
+All components are defined by interface: implementations are injected via Cake DI Pattern
   
-There are two implemented versions of the service: Basic and Advanced. 
+There are two implemented versions of the service: Local and Distributed. 
 
-Basic is not clustered, not persistent and has no retrying - so can not be considered truly reliable.
-Basic is scalable to the extent of any reasonable language size (a few millions of words) and medium product spaces (up to a billion, limited by a single JVM heap size)
+Local is not clustered, not persistent and has no retrying - so can not be considered truly reliable.
 
-Advanced is clustered, persistent and reliable. It is of Big Data caliber: limited by cluster size. 
-Note: it is not using any probabilistic data structures to handle really extreme data set sizes - though it is not difficult to add it.
+Local is scalable to the extent of any reasonable language size (a few millions of words) and medium product spaces (up to a billion, limited by a single JVM heap size)
 
-Important: Both versions are throttled by AWS request rate (which is roughly 1req/sec, otherwise giving 503 code). 
-REST module is managing this throttling the flow of AWS requests for new product URLs (has internal time window parameter set at 1000 millis)
-This really constrains the /POST API load when the product cache is cold - but should not be a problem once it is warm and URLs start to repeat themselves. 
+Distributed is clustered, persistent and reliable. It is of Big Data caliber: limited by cluster size. 
+Note: Distributed is not using any probabilistic data structures (like Count-Min Sketch) to handle really extreme data set sizes - though it is not difficult to add it.
+
+Important: Both versions are throttled by AWS request rate (which is set in 'aws' sub-config, default = 1req/sec) to avoid being hit with 503 responses from Amazon
+
+REST module is managing the throttling the flow of AWS requests for new product URLs 
+This can really constrain the /POST API load when the product cache is cold - but should not be a problem once it is warm and URLs start to repeat themselves. 
 The app does not re-query AWS for duplicate URLs and responds immediately in such cases (with 200 code instead of 201)
 As a workaround - it is possible to re-configure the AWS request rate to be much higher - and deal with 503 responses by retrying the failed URLs later.
 This is not implemented in the app - but can be easily achieved via endlessly repeating /POST requests for the same URLs (say, every few secs)
@@ -34,18 +36,19 @@ However, it is a questionable practice (may be OK for a demo though)
  
 Important: AWS Commercial API web service authenticates requests signed with a secure hash of (typically, current) timestamp signed with a private key associated with AWS developer account
 
-The SignedAWSRequestHelper utility manages that: it has three static values that MUST be overriden before compiling the project (there are 'XXX' values in there) to avoid BAD responses from AWS in runtime:
+The 'aws' sub-config has three values that MUST be overriden (there are 'XXX' values in there) to avoid BAD responses from AWS in runtime:
    - AWS Associate Tag (account nick name)
    - AWS Access Key ID (id for your AWS security key - so that AWS can look up its part of the secret key)
    - AWS Secret Key (this is the most sensitive: your part of the AWS secret key)
    
 Note: AWS allows to create many keys (two key pairs for free) and deactivate them at any time   
 
- 
-By default, application starts in Advanced version: this can be changed by starting it with the optional -b command line parameter   
+By default, application starts in Local version: this can be changed by starting it with the optional -BFG command line parameter   
 
-Basic version: 
+Local version: 
 
+  - does not require any external services running, other than Amazon: just launch this app and start using the RESTful service defined by it
+  - very fast responses for both GET and POST 
   - uses Local store module implementation: 
        a) all product IDs (extracted from URLs) are stored in a local in-memory cache backed by an immutable HashMap[Key, Unit]
        b) word cloud is stored in a local in-memory cache backed up by immutable HashMap[Word = String, WordCount = Long] and immutable TreeMap[(Word, WordCount), Unit] combo
@@ -54,36 +57,46 @@ Basic version:
   - uses Akka Streams stream analytics module implementation:
        a) allows to batch new product descriptions over a given (configurable) time window to optimize the TreeMap sorting frequency (default window is 1000 millisec)
        b) uses Akka Stream flow with Publisher Actor source and Foreach sink (that updates the word cloud cache) to pipeline the word cloud data processing logic
-       c) uses simple word Tokenizer which is based on regex, hard-coded stop words and Stanford NLP stemmer
+       c) uses simple EnglishWordTokenizer which is based on regex, hard-coded stop words and Stanford NLP stemmer
+  - the local Akka flow that processes the word cloud flow - is micro-batched (configurable via 'wordcloud' sub-config, default is 1sec) to manage the CPU load (important when data grows large)
 
-Advanced version:
+Distributed version:
 
   - uses Distributed store module implementation:
       a) all product IDs and word cloud versions are stored in Redis cache (it has very suitable structures for both)
       b) new product IDs to be processed are sent to a Kafka queue
   - uses Spark Streams streams analytics module implementation:
-      a) Spark Streams job is reading from Kafka, periodically saving its state by key in a checkpoint and updating word cloud results in Redis 
-      b) Spark MLib is used for Tokenization 
+      a) micro-batched (configurable via 'wordcloud' sub-config, default is 1sec) naturally by Spark Streaming
+      b) Spark Streams job is reading from Kafka, periodically saving its state by key in a checkpoint and updating word cloud results in Redis 
+      c) simple EnglishWordTokenizer is used for Tokenization (instead of MLib)
+      d) simple countByValue() is used (instead of complex probabilistic structures like Count-Min Sketch)
+      e) does not use Spark accumulators to handle county increments: Redis SortedSet zincrby() is handling that
       
-#Running
-
-You should start Redis (on default port 6379) and then:
-
-       $ sbt run
-
-#Testing
-
-To run all tests:
-
-
-        $ sbt test
         
 #Launching
         
         $ sbt assembly
         
-        It produces a fat jar in the /target/scala-x.xx folder.  Launch this jar using 'java -jar the-jar-name.jar' command with optional -b parameter for Basic mode
+        It produces a fat jar in the /target/scala-x.xx folder.  Launch this jar using 'java -jar the-jar-name.jar' command with optional -BFG parameter for Distributed mode
 
+#Dependencies
+       
+        Local mode does not require any additional external services (other than Amazon) running: it has all its dependencies (Akka 2.4 and Swagger-Akka-Http 0.6) embedded
+        
+        Distributed mode has extra dependencies embedded: 
+           - Akka-Stream-Kafka 0.13
+           - Redis-React 0.8
+           - Spark 2.0.1
+           - Spark-Stream-Kafka-0-10 2.01
+        Most important, the Distributed mode has extra of external service dependencies that must be up and running and available for client connections
+        See the wordcloud.conf for the external service endpoints (all are set at vendor defaults)
+         
+           - Redis: distributed cache service. The embedded client version (Redis-React library) needs 2.8.x server versions
+             Follow this link to install(on Ubuntu): https://redis.io/topics/quickstart
+             
+           - Kafka: distributed pub/sub messaging queue. The embedded client version (Akka-Kafka) needs 0.10.x server versoions
+             Follow this link to install(on Ubuntu): https://devops.profitbricks.com/tutorials/install-and-configure-apache-kafka-on-ubuntu-1604-1/
+         
 #Using HTTP
 
     	- /POST: uses a single query parameter 'ProductURL' defining a given Amazon product web page (as encoded URL string). 

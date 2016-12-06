@@ -7,11 +7,19 @@
 package net.andrewtorson.wordcloud.component
 
 import java.io.File
+import java.net.InetSocketAddress
+
+import scala.util.Try
 
 import com.typesafe.config.{Config, ConfigFactory}
 
 trait ConfigurationModule {
   val config: Config
+
+  def getAddress(path: String): Try[InetSocketAddress] = {
+    Try{val x = config.getConfig(path).getString("address").split(":")
+        new InetSocketAddress(x(0), x(1).toInt)}
+  }
 }
 
 trait ConfigurationModuleImpl extends ConfigurationModule {

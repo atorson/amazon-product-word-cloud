@@ -19,7 +19,9 @@ import akka.stream.actor.ActorPublisher
  * Created by Andrew Torson on 8/26/16.
  */
 
-
+/**
+ * Just gives the Props for the StreamingPublisherActor: needed for indirect instantiation (say, in Akka-Streams)
+ */
 object StreamingPublisherActor{
 
   def props[T: ClassTag](dropHead: Boolean = true): Props =
@@ -27,6 +29,16 @@ object StreamingPublisherActor{
 
 }
 
+/**
+ * Very simple publisher Actor extending ActorPublisher[T] trait
+ * Uses a small fixed internal buffer to handle backpressure
+ *
+ * This actor is meant to be used with very fast downstream consumers that rarely signal back-pressure: these consumers should buffer more properly
+ * This actor does NOT signal back-pressure upstream (can be easily done, say, if producers send a message asking to be notified when overflow happens)
+ *
+ * @param dropHead boolean indicating an overflow strategy - either Drop Tail or Drop Head
+ * @tparam T
+ */
 class StreamingPublisherActor[T: ClassTag] (dropHead: Boolean) extends ActorPublisher[T] with ActorLogging {
 
   case object QueueUpdated

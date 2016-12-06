@@ -1,11 +1,14 @@
 package net.andrewtorson.amazonapi;
 
 import com.google.common.base.Preconditions;
+import com.typesafe.config.Config;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.StringUtils;
 
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import javax.security.auth.DestroyFailedException;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.security.InvalidKeyException;
@@ -20,9 +23,10 @@ import java.util.*;
  */
 public class SignedAWSRequestsHelper {
 
-    private static final String AWS_ACCESS_KEY_ID = "XXXXXXXXXXX";
-    private static final String AWS_SECRET_KEY = "XXXXXXXXXXXXXXXXXX";
-    private static final String AWS_ASSOCIATE_TAG = "XXXXXXX";
+    private final String _accessKeyID;
+    private final String _associateTag;
+    private final String _endpoint;
+    private final Mac _mac;
 
 
     /**
@@ -32,9 +36,6 @@ public class SignedAWSRequestsHelper {
     
     /**
      * The HMAC algorithm required by Amazon
-     */    /*
-     * Utility function to fetch the response from the service and extract the
-     * title from the XML.
      */
 
     private static final String HMAC_SHA256_ALGORITHM = "HmacSHA256";
@@ -51,45 +52,39 @@ public class SignedAWSRequestsHelper {
      */
     private static final String REQUEST_METHOD = "GET";
 
-
-    private String endpoint = null;
-
-    private SecretKeySpec secretKeySpec = null;
-    private Mac mac = null;
-
     /**
-     * @param endpoint Destination for the requests.
+     * @param config AWS credentials config
+     * @param endpoint destination address for the requests
      */
-    public static SignedAWSRequestsHelper getInstance(String endpoint) throws IllegalArgumentException, UnsupportedEncodingException, NoSuchAlgorithmException, InvalidKeyException
-    {
-        Preconditions.checkArgument(!StringUtils.isEmpty(endpoint),"%s is null or empty", "endpoint");
+    public SignedAWSRequestsHelper(Config config, String endpoint) throws IllegalArgumentException, UnsupportedEncodingException, NoSuchAlgorithmException, InvalidKeyException, DestroyFailedException {
 
-        SignedAWSRequestsHelper instance = new SignedAWSRequestsHelper();
-        instance.endpoint = endpoint.toLowerCase();
+        String errorMessageFormat = "%s is empty";
 
-        byte[] secretyKeyBytes = AWS_SECRET_KEY.getBytes(UTF8_CHARSET);
-        instance.secretKeySpec = new SecretKeySpec(secretyKeyBytes, HMAC_SHA256_ALGORITHM);
-        instance.mac = Mac.getInstance(HMAC_SHA256_ALGORITHM);
-        instance.mac.init(instance.secretKeySpec);
+        _associateTag = config.getString("associateTag");
+        _accessKeyID = config.getString("accessKeyID");
+        _endpoint = endpoint.toLowerCase();
 
-        return instance;
+        Preconditions.checkArgument(!StringUtils.isEmpty(_associateTag), errorMessageFormat, "associateTag");
+        Preconditions.checkArgument(!StringUtils.isEmpty(_accessKeyID), errorMessageFormat, "accessKeyID");
+        Preconditions.checkArgument(!StringUtils.isEmpty(_endpoint), errorMessageFormat, "endpoint");
+
+        _mac = Mac.getInstance(HMAC_SHA256_ALGORITHM);
+        SecretKeySpec key = new SecretKeySpec(config.getString("secretKey").getBytes(UTF8_CHARSET), HMAC_SHA256_ALGORITHM);
+        _mac.init(key);
+        // no need to call 'destroy' on this secret key implementation
     }
     
-    /**
-     * The construct is private since we'd rather use getInstance()
-     */
-    private SignedAWSRequestsHelper() {}
-
     /**
      * This method signs requests in hashmap form. It returns a URL that should
      * be used to fetch the response. The URL returned should not be modified in
      * any way, doing so will invalidate the signature and Amazon will reject
      * the request.
+     * @params map of AWS commercial API request params
      */
     public String sign(Map<String, String> params) throws UnsupportedEncodingException{
-        Map<String,String> decoratedParams = new TreeMap<>(params);
-        decoratedParams.put("AssociateTag", AWS_ASSOCIATE_TAG);
-        decoratedParams.put("AWSAccessKeyId", AWS_ACCESS_KEY_ID);
+        Map<String,String> decoratedParams = new TreeMap<>(params); // it must be sorted alphabetically according to AWS docs (probably, used by AWS sharding)
+        decoratedParams.put("AssociateTag", _associateTag);
+        decoratedParams.put("AWSAccessKeyId", _accessKeyID);
         decoratedParams.put("Timestamp", this.timestamp());
 
         // get the canonical form the query string
@@ -98,7 +93,7 @@ public class SignedAWSRequestsHelper {
         // create the string upon which the signature is calculated 
         String toSign = 
             REQUEST_METHOD + "\n" 
-            + this.endpoint + "\n"
+            + this._endpoint + "\n"
             + REQUEST_URI + "\n"
             + canonicalQS;
 
@@ -108,7 +103,7 @@ public class SignedAWSRequestsHelper {
 
         // construct the URL
         String url = 
-            "http://" + this.endpoint + REQUEST_URI + "?" + canonicalQS + "&Signature=" + sig;
+            "http://" + this._endpoint + REQUEST_URI + "?" + canonicalQS + "&Signature=" + sig;
 
         return url;
     }
@@ -121,7 +116,7 @@ public class SignedAWSRequestsHelper {
      */
     private String hmac(String stringToSign) throws UnsupportedEncodingException{
         byte[] data = stringToSign.getBytes(UTF8_CHARSET);
-        byte[]rawHmac = mac.doFinal(data);
+        byte[]rawHmac = _mac.doFinal(data);
         Base64 encoder = new Base64();
         String sig = new String(encoder.encode(rawHmac));
         return sig.trim();

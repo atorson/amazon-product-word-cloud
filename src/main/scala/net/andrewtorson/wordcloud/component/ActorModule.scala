@@ -8,7 +8,9 @@ package net.andrewtorson.wordcloud.component
 
 import akka.actor.ActorSystem
 
-
+/**
+ * Defines a module holding Akka Actor System resource (widely used by other module implementations)
+ */
 trait ActorModule {
   val system: ActorSystem
 }

@@ -13,7 +13,6 @@ import scala.reflect.ClassTag
 import scala.util.{Failure, Success}
 
 import akka.Done
-import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
 import akka.http.scaladsl.model.StatusCodes._
 import akka.http.scaladsl.server.{Directives, Route}
@@ -21,21 +20,38 @@ import akka.stream.scaladsl.{Flow, Keep, Sink, Source}
 import akka.stream.{ActorMaterializer, KillSwitches, OverflowStrategy, ThrottleMode}
 import akka.util.Timeout
 import io.swagger.annotations._
-import net.andrewtorson.wordcloud.aws.AWSCommercialAPIProductDescriptionFinder.{InvalidProductURLException, MissingProductDescriptionException}
-import net.andrewtorson.wordcloud.component.{AWSModule, ActorModule, DuplicateKeyPersistenceException, StoreModule}
+import net.andrewtorson.wordcloud.aws.{InvalidProductURLException, MissingProductDescriptionException}
+import net.andrewtorson.wordcloud.component._
 import net.andrewtorson.wordcloud.store.StreamingPublisherActor
 import spray.json.DefaultJsonProtocol
 
+
+/**
+ * Simple domain model for the Word Cloud application
+ * @param topK how many word cloud items requested
+ * @param wordCounts actual return
+ * @tparam Repr representation format (that can be derived from word counts)
+ */
 case class WordCloud[Repr: ClassTag](topK: Int, wordCounts: Repr)
 
+/**
+ * This class defines the Akka-HTTP RESTful endpoint for the WordCloud of Product Description words
+ * @param modules quite a lot of modules: need Crawl, Persist and Access services
+ */
 @Path("/wordcloud")
 @Api("/wordcloud")
-class ProductDescriptionRoute(val modules: ActorModule with StoreModule with AWSModule) extends Directives {
+class ProductDescriptionRoute(val modules: ConfigurationModule with ActorModule with StoreModule with CrawlerModule) extends Directives {
 
+  private val config = modules.config.getConfig("aws")// this field will be cleaned up by Scala compiler because it is only used in the constructor
+
+  // very simple representation: no conversion on top of what is accessed
   type WordCountsRepr = Seq[modules.ReprOut]
 
+  // these are the query params for the POST and GET methods in this endpoint
   val REQ_URL_PARAM = "ProductURL"
   val REQ_TOPK_PARAM = "TopK"
+
+  // Spray-JSON serializer for the GET method response
   object JsonProtocol extends DefaultJsonProtocol {
     implicit val wordCloudFormat = jsonFormat2(WordCloud[WordCountsRepr])
   }
@@ -50,6 +66,7 @@ class ProductDescriptionRoute(val modules: ActorModule with StoreModule with AWS
 
   // URL, ProductID and Promise to complete
   type Req = (String, modules.productRetriever.ProductID, Promise[Done])
+
   // need to throttle AWS requests rate (to avoid 503 response) and buffer the POSTed URLs
   // there is a small chance that there may be duplicate keys in this flow (despite of prior contains check):
   // it is the case when a batch of requests accumulated over 1000 millis has duplicate URLs that were not cached yet
@@ -57,9 +74,10 @@ class ProductDescriptionRoute(val modules: ActorModule with StoreModule with AWS
   // and we let the persistor handle it as it seems fit
   // e.g. it should only persist once and fail all duplicate requests with DuplicateKeysException
   val runningAWSRetrivealFlowMat = Source.actorPublisher[Req](StreamingPublisherActor.props[Req]()).viaMat(
-    Flow[Req].buffer(10000000, OverflowStrategy.backpressure).throttle(1, 1000.milli, 1, ThrottleMode.Shaping))(Keep.left)
+    Flow[Req].buffer(config.getInt("requestBufferSize"), OverflowStrategy.backpressure).throttle(1, config.getInt("requestIntervalMillis").millis, 1, ThrottleMode.Shaping))(Keep.left)
     .async.viaMat(KillSwitches.single)(Keep.both).toMat(Sink.foreach{x: Req => {
-          // complete passed promise with URL retrieve + persist future
+          // complete passed promise with the future from retrieve + persist pipeline
+          // this makes the response delayed (without blocking) - but actual meaningful response can be returned then
           x._3.completeWith(
             modules.productRetriever.find(x._1).flatMap{
               z: modules.productRetriever.ProductDescription => modules.inPersistor.persist(Seq((z._1, z._2))).map(_ => Done)}
@@ -85,6 +103,7 @@ class ProductDescriptionRoute(val modules: ActorModule with StoreModule with AWS
             try {
               val K = topK.toInt
               onComplete {
+                // advantage of Source[] type of accessor: can lazily iterate at arbitrary length
                 modules.outAccessor.access().take(K).toMat(Sink.fold(Seq[modules.ReprOut]()) { (x, y) => x :+ y })(Keep.right).run()
               } {
                 case Success(result: Seq[modules.ReprOut]) => complete(WordCloud[WordCountsRepr](K, result))
@@ -115,12 +134,14 @@ class ProductDescriptionRoute(val modules: ActorModule with StoreModule with AWS
         case Some(url: String) => {
           modules.productRetriever.extract(url) match {
             case Success(locator: modules.productRetriever.ProductLocator) => {
+              // check if the product has already been processed: no Crawling and Processing will be done - super-fast response
               val id = locator._1
               onComplete {
                 modules.inDuplicateKeyChecker.contains(id)
               }{
                 case Success(true) => complete(OK, s"Product $id description digest is already present, no fetching/processing required")
                 case Success(false) => onComplete {
+                  // inject into the throttled flow which will complete the future
                   val p = Promise[Boolean]()
                   ask(runningAWSRetrivealFlowMat._1, (url, id, p))
                   p.future

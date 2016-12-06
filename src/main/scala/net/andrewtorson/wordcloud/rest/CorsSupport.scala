@@ -10,9 +10,11 @@ import akka.http.scaladsl.server.Directive.addByNameNullaryApply
 import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.server.{Directive0, Route}
 
-//see https://groups.google.com/forum/#!topic/akka-user/5RCZIJt7jHo
+/**
+ * Defines pluggable support of CORS for an HTTP endpoint
+ */
 trait CorsSupport {
-
+  //see https://groups.google.com/forum/#!topic/akka-user/5RCZIJt7jHo
   //this directive adds access control headers to normal responses
   private def addAccessControlHeaders: Directive0 = {
     mapResponseHeaders { headers =>
@@ -32,6 +34,11 @@ trait CorsSupport {
     )
   }
 
+  /**
+   * Decorates the route with CORS directive
+   * @param r any Akka-HTTP route
+   * @return decorated route
+   */
   def corsHandler(r: Route) = addAccessControlHeaders {
     preflightRequestHandler ~ r
   }
