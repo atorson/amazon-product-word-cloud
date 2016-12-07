@@ -1,9 +1,3 @@
-/*
- * Copyright (c) 2016 Omron Adept Technologies. All rights reserved
- * Author: Andrew Torson
- * Date: Aug 26, 2016
- */
-
 package net.andrewtorson.wordcloud.store
 
 import scala.annotation.tailrec
