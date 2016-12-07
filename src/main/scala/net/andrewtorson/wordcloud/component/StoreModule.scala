@@ -36,7 +36,9 @@ trait StoreModule {
 
 /**
  * Local in-memory store implementation backed by a combo of HashMap + TreeMap
- * Very fast operations: no network-hop and all operations are O(1) (including sorted source access)
+ * Very fast operations: no network-hop, persist and contains are O(1) and access is O(logN) for the first elem and O(logK) worst-case for the K-th elem
+ * Persistence into sortedMap is O(logN) for every element that the incremental batch contains
+ * Local SortedMap gives the best trade-off for the incremental WordCloud processing as compared to local PriorityQueue (logN access) or SortedArray (N*LogN on every batch persistence)
  * The time-performance efficiency is achieved at the expense of space (in-memory storage) which is OK for medium-scale data
  * All operations are atomic (queries are sent to an Actor holding actual maps)
  * All data will be lost on JVM shutdown: this is the main drawback of this implementation

@@ -30,6 +30,7 @@ libraryDependencies ++= {
     "org.apache.spark" %% "spark-streaming" % "2.0.1",
     "org.apache.spark" %% "spark-streaming-kafka-0-10" % "2.0.1",
     "com.github.swagger-akka-http" %% "swagger-akka-http" % "0.6.2",
+    "net.ruippeixotog" %% "scala-scraper" % "1.2.0",
     "com.typesafe.akka"   %%  "akka-testkit"  % akkaV   % "test",
     "org.scalatest" %% "scalatest" % "2.2.1" % "test",
     "junit" % "junit" % "4.11" % "test",

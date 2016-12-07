@@ -10,7 +10,7 @@ import javax.ws.rs.Path
 
 import scala.concurrent.Promise
 import scala.reflect.ClassTag
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Success, Try}
 
 import akka.Done
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
@@ -40,9 +40,7 @@ case class WordCloud[Repr: ClassTag](topK: Int, wordCounts: Repr)
  */
 @Path("/wordcloud")
 @Api("/wordcloud")
-class ProductDescriptionRoute(val modules: ConfigurationModule with ActorModule with StoreModule with CrawlerModule) extends Directives {
-
-  private val config = modules.config.getConfig("aws")// this field will be cleaned up by Scala compiler because it is only used in the constructor
+class ProductDescriptionRoute(val modules: ActorModule with StoreModule with CrawlerModule) extends Directives {
 
   // very simple representation: no conversion on top of what is accessed
   type WordCountsRepr = Seq[modules.ReprOut]
@@ -67,6 +65,10 @@ class ProductDescriptionRoute(val modules: ConfigurationModule with ActorModule 
   // URL, ProductID and Promise to complete
   type Req = (String, modules.productRetriever.ProductID, Promise[Done])
 
+  // just a simple formula to buffer more if retrieval is slow
+  val requestIntervalMillis = modules.productRetriever.requestIntervalMillis
+  val requestBufferSize = requestIntervalMillis * 1000
+
   // need to throttle AWS requests rate (to avoid 503 response) and buffer the POSTed URLs
   // there is a small chance that there may be duplicate keys in this flow (despite of prior contains check):
   // it is the case when a batch of requests accumulated over 1000 millis has duplicate URLs that were not cached yet
@@ -74,7 +76,7 @@ class ProductDescriptionRoute(val modules: ConfigurationModule with ActorModule 
   // and we let the persistor handle it as it seems fit
   // e.g. it should only persist once and fail all duplicate requests with DuplicateKeysException
   val runningAWSRetrivealFlowMat = Source.actorPublisher[Req](StreamingPublisherActor.props[Req]()).viaMat(
-    Flow[Req].buffer(config.getInt("requestBufferSize"), OverflowStrategy.backpressure).throttle(1, config.getInt("requestIntervalMillis").millis, 1, ThrottleMode.Shaping))(Keep.left)
+    Flow[Req].buffer(requestBufferSize, OverflowStrategy.backpressure).throttle(1, requestIntervalMillis.millis, 1, ThrottleMode.Shaping))(Keep.left)
     .async.viaMat(KillSwitches.single)(Keep.both).toMat(Sink.foreach{x: Req => {
           // complete passed promise with the future from retrieve + persist pipeline
           // this makes the response delayed (without blocking) - but actual meaningful response can be returned then
@@ -132,7 +134,7 @@ class ProductDescriptionRoute(val modules: ConfigurationModule with ActorModule 
       parameterMap { fieldMap => {
       fieldMap get REQ_URL_PARAM match {
         case Some(url: String) => {
-          modules.productRetriever.extract(url) match {
+          Try{modules.productRetriever.extract(url)} match {
             case Success(locator: modules.productRetriever.ProductLocator) => {
               // check if the product has already been processed: no Crawling and Processing will be done - super-fast response
               val id = locator._1

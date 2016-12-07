@@ -9,6 +9,7 @@ package net.andrewtorson.wordcloud
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Promise}
 
+
 import akka.Done
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.server.{Route, RouteConcatenation}
@@ -22,24 +23,40 @@ import net.andrewtorson.wordcloud.rest.{CorsSupport, SwaggerDocService}
  */
 object Main extends App with RouteConcatenation with CorsSupport with LazyLogging{
 
-  // a few modes supported
-  // could define a HYBRID mode which is LOCAL + Redis Store
-  // but didn't bother as it is inferior to a (more complex but better) (yet unimplmented)
-  // option of using Akka-Cluster Distributed-Data cache (see LocalStoreModuleImpl comments)
-  object WordCloudAppModes extends Enumeration {
-    val LOCAL, DISTRIBUTED = Value
-  }
+  // Cake DI pattern in action below
 
-  import WordCloudAppModes._
-  // by default, start in local mode
-  // BFG option (as in, Doom BFG9000) indicates Distributed
-  val mode = if (!args.isEmpty && args(0).startsWith("BFG")) DISTRIBUTED else LOCAL
+  // Injection is driven by command line options rather than a configuration file
+  //
+  // Note1: Proper DI framework (Guice or Spring Context) is a lot more handy in managing monolith apps (like this)
+  // because there is no need to enumerate on a cartesian product of non-auto-wired options
+  // here, there's just 2 options - so it is not worth the effort (extra dependency and loss of bootstrapping control) to bring a DI framework
+  //
+  // Note2: another alternative is to use regular composition and delegation via implicit conversion/Pimp My Library pattern
+  // But this pattern is only meant for simple one-trait cases: it can't handle the injection flow orchestration
+  //
+  // Note3: yet another alternative is to use some kind of 'Injector' Free Monad pattern (using a reflective class constructor to instantiate dependencies)
+  // This would be a great way to have our own simple DI flow implementation
+  // But it also not worth the effort (extra lines of code) for the simple case of 2 options)
+  //
+  // So let's stick with Cake even though the code looks somewhat ugly (2x2 cartesian product enumeration, repeating ourselves etc.) below
+
   try {
-    val modules = mode match {
-      case DISTRIBUTED => {
-        // Cake DI pattern in action
-        val result = new ConfigurationModuleImpl with ActorModuleImpl with
-        DistributedStoreModuleImplementation with DistributedStreamAnalyticsModule with AWSCrawlerModuleImpl with RestModuleImpl
+    // BFG option (as in, Doom BFG9000) indicates Distributed
+    val modules  = (args.contains("BFG")) match {
+
+      case true => {
+
+        // AWS indicates official Amazon AWS XML endpoint service instead of Amazon HTML scraping
+        val result = (args.contains("AWS")) match {
+
+          case true => new ConfigurationModuleImpl with ActorModuleImpl with
+            DistributedStoreModuleImplementation with DistributedStreamAnalyticsModule with AWSCrawlerModuleImpl with RestModuleImpl
+
+          // by default use Amazon HTML scraper
+          case _ =>   new ConfigurationModuleImpl with ActorModuleImpl with
+            DistributedStoreModuleImplementation with DistributedStreamAnalyticsModule with AmazonScraperCrawlerModuleImpl with RestModuleImpl
+        }
+
         // start Spark locally on a separate thread
         // could use a Spark Launcher though - just need to re-organize this project
         // into a two-project SBT where second depends on first
@@ -62,10 +79,18 @@ object Main extends App with RouteConcatenation with CorsSupport with LazyLoggin
         result
       }
 
-      case LOCAL => {
-        // Cake DI pattern in action
-        new ConfigurationModuleImpl with ActorModuleImpl with
-        LocalStreamAnalyticsModule with LocalStoreModuleImplementation with AWSCrawlerModuleImpl with RestModuleImpl}
+      // by default, start in Local mode
+      case _ => {
+
+        (args.contains("AWS")) match {
+
+          case true => new ConfigurationModuleImpl with ActorModuleImpl with
+            LocalStreamAnalyticsModule with LocalStoreModuleImplementation with AWSCrawlerModuleImpl with RestModuleImpl
+
+          case _ => new ConfigurationModuleImpl with ActorModuleImpl with
+            LocalStreamAnalyticsModule with LocalStoreModuleImplementation with AmazonScraperCrawlerModuleImpl with RestModuleImpl
+        }
+      }
     }
 
     // Akka implicits

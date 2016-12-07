@@ -1,6 +1,6 @@
 package net.andrewtorson.wordcloud.component
 
-import net.andrewtorson.wordcloud.aws.{AsyncProductDescriptionFinder, AWSCommercialAPIProductDescriptionFinder}
+import net.andrewtorson.wordcloud.aws.{AWSCommercialAPIProductDescriptionFinder, AmazonProductDescriptionScraper, AsyncProductDescriptionFinder}
 
 /**
  * Created by Andrew Torson on 11/30/16.
@@ -14,4 +14,8 @@ trait CrawlerModule {
 trait AWSCrawlerModuleImpl extends CrawlerModule{
   this: ConfigurationModule =>
   override val productRetriever = new AWSCommercialAPIProductDescriptionFinder(config.getConfig("aws"))
+}
+
+trait AmazonScraperCrawlerModuleImpl extends CrawlerModule{
+  override val productRetriever = AmazonProductDescriptionScraper
 }

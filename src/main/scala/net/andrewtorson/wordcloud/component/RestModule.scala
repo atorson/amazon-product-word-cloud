@@ -12,7 +12,7 @@ trait RestModule {
 }
 
 trait RestModuleImpl extends RestModule {
-  this: ConfigurationModule with ActorModule with StoreModule with CrawlerModule =>
+  this: ActorModule with StoreModule with CrawlerModule =>
 
   override val routes = new ProductDescriptionRoute(this).routes
 

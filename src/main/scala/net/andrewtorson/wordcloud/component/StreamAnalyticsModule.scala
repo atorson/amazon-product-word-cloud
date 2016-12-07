@@ -58,8 +58,6 @@ trait LocalStreamAnalyticsModule extends StreamAnalyticsModule {
  */
 trait DistributedStreamAnalyticsModule extends StreamAnalyticsModule {
 
-  this: ConfigurationModule =>
-
   import DistributedStoreModule._
 
   override type In = RDD[String]

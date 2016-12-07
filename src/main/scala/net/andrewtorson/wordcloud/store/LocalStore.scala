@@ -113,7 +113,7 @@ sealed trait ReducerLocalStoreContext[K, V] extends BasicLocalStoreContext[K,V]{
 }
 
 /**
- * Sorted collection interface: backed by immutable SortedMap (holding a RB-tree within: super-fast O(1) iterator)
+ * Sorted collection interface: backed by immutable SortedMap (holding a RB-tree within)
  * @tparam K
  * @tparam V
  */
@@ -164,7 +164,7 @@ class BasicSubStoreActor[K: ClassTag, V: ClassTag] extends SubStoreActor with Ba
 
 /**
  * This actor has two maps: HashMap and SortedMap
- * It provides a persistor (that goes first to HashMap and ends at SortedMap
+ * It provides a persistor (that goes first to HashMap and ends at SortedMap)
  * and accessor that only acesses SortedMap
  *
  * @param reducer reducer to handle incremental persistence (on duplicate entries)
