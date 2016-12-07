@@ -23,7 +23,7 @@ All components are defined by interface: implementations are injected via Cake D
 
 There are two options for the Crawler module: Scraper and AWS
 
-By default, Scraper crawler is used (mostly, because no AWS credentials are needed). AWS crawler is better (though requires AWS credentials) - and can be enabled on application start-up by passing optional -AWS command line parameter
+By default, Scraper crawler is used (mostly, because no AWS credentials are needed). AWS crawler is better (though requires AWS credentials) - and can be enabled on application start-up by passing optional 'AWS' (without quote marks) command line parameter
 
 Scraper crawler (based on scala-scraper library) imitates a browser (JSoup implementation, no JavaScript invokations) which uses Amazon HTML endpoint and CSS query to extract product description data
 
@@ -53,7 +53,7 @@ This is not implemented in the app - but can be achieved via endlessly repeating
 
 There are two implemented versions of the service: Local and Distributed. 
 
-By default, application starts in Local mode. Distributed mode can be enabled at start up by passing optional -BFG command line parameter    
+By default, application starts in Local mode. Distributed mode can be enabled at start up by passing optional 'BFG' (without quote marks) command line parameter    
 
 Local is not clustered, not persistent and has no retrying - so can not be considered truly reliable.
 
