@@ -44,10 +44,13 @@ libraryDependencies ++= {
 test in assembly := {}
 assemblyMergeStrategy in assembly := {
   case x if x.contains("org/slf4j/impl") => MergeStrategy.first
-  case x if x.contains("javax/annotation") => MergeStrategy.first
-  case x =>
-    val oldStrategy = (assemblyMergeStrategy in assembly).value
-    oldStrategy(x)
+  //case x if x.contains("javax/annotation") => MergeStrategy.first
+  case x if x.contains("javax") => MergeStrategy.first
+  case x if x.contains("apache") => MergeStrategy.first
+  case x if x.contains("aopalliance") => MergeStrategy.first
+
+  case x => {val oldStrategy = (assemblyMergeStrategy in assembly).value
+            oldStrategy(x)}
 }
 
 fork := true
