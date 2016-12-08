@@ -20,7 +20,7 @@ class SwaggerDocService(system: ActorSystem, address: InetSocketAddress) extends
   override implicit val actorSystem: ActorSystem = system
   override implicit val materializer: ActorMaterializer = ActorMaterializer()
   override val apiTypes = Seq(ru.typeOf[ProductDescriptionRoute])
-  override val host = address.toString
+  override val host = s"${address.getHostString}:${address.getPort}"  //Swagger can't deal with toString() format = localhost/127.0.0.1 addresses
   override val info = Info(version = "2.0")
 
   def assets = pathPrefix("swagger") {
