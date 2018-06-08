@@ -75,10 +75,11 @@ trait DistributedStreamAnalyticsModule extends StreamAnalyticsModule {
   private val address = getAddress("spark").get// this field will be cleaned up by Scala compiler because it is only used in the constructor
 
   val sparkConf = new SparkConf()
-      .setMaster("local[*]")
+      .setMaster(config.getConfig("spark").getString("master"))
       .setAppName(config.getConfig("spark").getString("appName"))
       .set("spark.driver.host", address.getHostName)
       .set("spark.driver.port", address.getPort.toString)
+      .setJars(Seq(config.getConfig("spark").getString("jarPath")))
 
   
   lazy val sc = {

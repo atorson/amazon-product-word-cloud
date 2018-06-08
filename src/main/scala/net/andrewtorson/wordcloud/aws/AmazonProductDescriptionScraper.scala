@@ -22,7 +22,7 @@ object AmazonProductDescriptionScraper extends AmazonURLExtractor{
 
   override def find(urlEncoded: String)(implicit ec: ExecutionContext) =  Future[ProductDescription] {
       val locator = extract(urlEncoded)
-      val descriptionOpt = browser.get(urlEncoded) >?> element("#productDescription p")
+      val descriptionOpt = browser.get(URLDecoder.decode(urlEncoded, "UTF-8")) >?> element("#productDescription p")
       if (descriptionOpt.isEmpty) throwMissingDescriptionException(locator)
       (locator._1, descriptionOpt.get.text)
   }
